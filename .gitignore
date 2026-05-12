@@ -1,0 +1,34 @@
+# ─── OS ────────────────────────────────────────
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+*.swp
+*.swo
+*~
+
+# ─── IDEs ──────────────────────────────────────
+.idea/
+.vscode/
+*.code-workspace
+.project
+.classpath
+.settings/
+
+# ─── Node (not used, but just in case) ─────────
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+package-lock.json
+
+# ─── Test & temp files ─────────────────────────
+test-sample.txt
+*.tmp
+*.bak
+*.log
+
+# ─── Cloudflare build artifacts ────────────────
+.wrangler/
+.mf/
+functions/

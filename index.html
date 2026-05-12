@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="description" content="AmiLector — Lector de documentos con voz de alta calidad. Carga PDFs, DOCX, TXT y escucha con las mejores voces de Google.">
+  <meta name="theme-color" content="#2563eb">
+  <title>AmiLector — Lector de Documentos con Voz</title>
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📖</text></svg>">
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+
+  <!-- Chrome suggestion banner (shown on non-Chrome browsers) -->
+  <div id="chrome-banner" class="chrome-banner hidden">
+    🔊 Para la mejor calidad de voz, usa <a href="https://www.google.com/chrome/" target="_blank">Google Chrome</a>
+  </div>
+
+  <!-- ═══ LIBRARY VIEW ═══ -->
+  <section id="view-library" class="view active" aria-label="Biblioteca de documentos">
+    <header class="library-header">
+      <div style="display:flex;align-items:center">
+        <h1>📖 AmiLector</h1>
+        <span id="storage-badge" class="storage-badge hidden"></span>
+      </div>
+      <button id="btn-add" class="btn-add" aria-label="Agregar documento" title="Agregar documento">+</button>
+    </header>
+
+    <!-- Empty state -->
+    <div id="empty-state" class="empty-state">
+      <svg viewBox="0 0 120 120" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <rect x="25" y="15" width="50" height="70" rx="4" stroke="currentColor" stroke-width="2.5" opacity="0.3"/>
+        <rect x="35" y="25" width="50" height="70" rx="4" stroke="currentColor" stroke-width="2.5" opacity="0.5"/>
+        <rect x="45" y="35" width="50" height="70" rx="4" fill="var(--surface)" stroke="currentColor" stroke-width="2.5"/>
+        <line x1="55" y1="52" x2="85" y2="52" stroke="currentColor" stroke-width="2" opacity="0.4"/>
+        <line x1="55" y1="60" x2="80" y2="60" stroke="currentColor" stroke-width="2" opacity="0.3"/>
+        <line x1="55" y1="68" x2="82" y2="68" stroke="currentColor" stroke-width="2" opacity="0.4"/>
+        <line x1="55" y1="76" x2="75" y2="76" stroke="currentColor" stroke-width="2" opacity="0.3"/>
+        <circle cx="70" cy="90" r="12" fill="var(--accent)" opacity="0.15"/>
+        <text x="65" y="95" font-size="16" fill="var(--accent)">🔊</text>
+      </svg>
+      <h2>Tu biblioteca está vacía</h2>
+      <p>Arrastra un archivo aquí o toca el botón + para agregar tu primer documento</p>
+      <button id="btn-add-empty" class="btn-primary">Agregar documento</button>
+    </div>
+
+    <!-- Document grid -->
+    <div id="library-grid" class="library-grid hidden"></div>
+  </section>
+
+  <!-- ═══ READER VIEW ═══ -->
+  <section id="view-reader" class="view" aria-label="Lector de documento">
+    <header class="reader-header">
+      <button id="btn-back" class="btn-back" aria-label="Volver a biblioteca">←</button>
+      <span id="reader-title" class="reader-title"></span>
+      <div class="reader-actions">
+        <button id="btn-bookmark" aria-label="Poner marcador" title="Poner marcador">🔖</button>
+        <button id="btn-settings" aria-label="Ajustes de lectura" title="Ajustes">⚙</button>
+        <button id="btn-theme-toggle" aria-label="Cambiar tema" title="Tema">☀</button>
+      </div>
+    </header>
+
+    <div class="reader-body" id="reader-body">
+      <div id="reader-content" class="reader-content" role="document"></div>
+    </div>
+
+    <button id="btn-return-pos" class="btn-return-to-pos" aria-label="Volver a posición de lectura">
+      ↓ Volver a lectura
+    </button>
+    <button id="btn-goto-bookmark" class="btn-goto-bookmark hidden" aria-label="Ir al marcador">
+      🔖 Ir al marcador
+    </button>
+
+    <!-- TTS Control Bar -->
+    <div class="tts-bar" role="region" aria-label="Controles de lectura por voz">
+      <div class="tts-progress">
+        <span id="tts-current">0</span>
+        <input type="range" id="tts-seek" min="0" max="100" value="0" aria-label="Progreso de lectura">
+        <span id="tts-total">0</span>
+      </div>
+      <div class="tts-controls">
+        <div class="tts-main-controls">
+          <button id="btn-skip-back" class="tts-btn" aria-label="Retroceder">⏮</button>
+          <button id="btn-play" class="tts-btn tts-btn-play" aria-label="Reproducir">▶</button>
+          <button id="btn-skip-fwd" class="tts-btn" aria-label="Avanzar">⏭</button>
+        </div>
+        <div class="tts-secondary-controls">
+          <button class="tts-speed-btn" data-speed="0.75">0.75x</button>
+          <button class="tts-speed-btn active" data-speed="1">1x</button>
+          <button class="tts-speed-btn" data-speed="1.25">1.25x</button>
+          <button class="tts-speed-btn" data-speed="1.5">1.5x</button>
+          <button class="tts-speed-btn" data-speed="2">2x</button>
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;justify-content:space-between">
+        <select id="voice-select" class="tts-voice-select" aria-label="Seleccionar voz"></select>
+        <span id="tts-status" class="tts-status" role="status" aria-live="polite">Listo</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══ SETTINGS PANEL ═══ -->
+  <div id="settings-overlay" class="settings-overlay">
+    <div class="settings-panel" role="dialog" aria-label="Ajustes de lectura">
+      <h3>Ajustes <button id="btn-close-settings" aria-label="Cerrar">✕</button></h3>
+
+      <div class="setting-group">
+        <div class="setting-label">Tamaño de fuente</div>
+        <div class="font-size-control">
+          <button id="btn-font-dec" aria-label="Reducir fuente">A-</button>
+          <span id="font-size-display">1.1rem</span>
+          <button id="btn-font-inc" aria-label="Aumentar fuente">A+</button>
+        </div>
+      </div>
+
+      <div class="setting-group">
+        <div class="setting-label">Tipografía</div>
+        <div class="setting-options" id="font-family-options">
+          <button class="setting-opt active" data-font="serif" style="font-family:Georgia,serif">Serif</button>
+          <button class="setting-opt" data-font="sans" style="font-family:system-ui,sans-serif">Sans</button>
+          <button class="setting-opt" data-font="mono" style="font-family:'Courier New',monospace">Mono</button>
+        </div>
+      </div>
+
+      <div class="setting-group">
+        <div class="setting-label">Tema</div>
+        <div class="setting-options" id="theme-options">
+          <button class="setting-opt active" data-theme="light">☀ Claro</button>
+          <button class="setting-opt" data-theme="dark">🌙 Oscuro</button>
+          <button class="setting-opt" data-theme="sepia">📜 Sepia</button>
+        </div>
+      </div>
+
+      <div class="setting-group">
+        <div class="setting-label">Ancho del texto</div>
+        <div class="setting-options" id="width-options">
+          <button class="setting-opt" data-width="narrow">Estrecho</button>
+          <button class="setting-opt active" data-width="normal">Normal</button>
+          <button class="setting-opt" data-width="wide">Amplio</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ UPLOAD MODAL ═══ -->
+  <div id="modal-upload" class="modal-overlay">
+    <div class="modal">
+      <h3 id="upload-title">Procesando documento...</h3>
+      <div id="upload-progress" class="progress-steps">
+        <div class="progress-step pending" data-step="reading"><span class="icon"></span> Leyendo archivo</div>
+        <div class="progress-step pending" data-step="extracting"><span class="icon"></span> Extrayendo texto</div>
+        <div class="progress-step pending" data-step="normalizing"><span class="icon"></span> Normalizando</div>
+        <div class="progress-step pending" data-step="analyzing"><span class="icon"></span> Detectando idioma</div>
+        <div class="progress-step pending" data-step="segmenting"><span class="icon"></span> Preparando lectura</div>
+        <div class="progress-step pending" data-step="done"><span class="icon"></span> ¡Listo!</div>
+      </div>
+      <div id="upload-error" class="hidden" style="color:var(--danger);font-size:0.85rem;margin-top:12px"></div>
+      <div id="upload-actions" class="modal-actions hidden">
+        <button id="btn-upload-library" class="btn-secondary">Ver biblioteca</button>
+        <button id="btn-upload-open" class="btn-primary">Abrir ahora</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ CONFIRM DIALOG ═══ -->
+  <div id="modal-confirm" class="modal-overlay">
+    <div class="modal">
+      <h3 id="confirm-title">Confirmar</h3>
+      <div id="confirm-content" class="confirm-content"></div>
+      <div class="modal-actions">
+        <button id="btn-confirm-cancel" class="btn-secondary">Cancelar</button>
+        <button id="btn-confirm-ok" class="btn-danger">Eliminar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Drop zone overlay -->
+  <div id="drop-overlay" class="drop-overlay">
+    <div class="drop-overlay-inner">
+      <svg viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <rect x="12" y="8" width="40" height="48" rx="4" stroke="currentColor" stroke-width="2.5"/>
+        <line x1="22" y1="24" x2="42" y2="24" stroke="currentColor" stroke-width="2" opacity="0.5"/>
+        <line x1="22" y1="32" x2="38" y2="32" stroke="currentColor" stroke-width="2" opacity="0.4"/>
+        <line x1="22" y1="40" x2="40" y2="40" stroke="currentColor" stroke-width="2" opacity="0.5"/>
+      </svg>
+      <p>Suelta el archivo aquí</p>
+    </div>
+  </div>
+
+  <!-- Hidden file input -->
+  <input type="file" id="file-input" class="file-input" accept=".pdf,.txt,.docx,.md">
+
+  <!-- ═══ SCRIPTS ═══ -->
+  <script type="module">
+    import * as pdfjsLib from 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4/build/pdf.min.mjs';
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4/build/pdf.worker.min.mjs';
+    window.pdfjsLib = pdfjsLib;
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/mammoth@1.12.0/mammoth.browser.min.js"></script>
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>

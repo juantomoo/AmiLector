@@ -21,7 +21,8 @@ let currentDoc = null;
 let allVoices = [];
 let tts = new TTSEngine();
 let googleTTS = new GoogleTranslateTTS();
-let ttsTTSEngine = 'webspeech';
+let activeEngine = 'webspeech'; // 'webspeech' | 'google-translate'
+let googleTTSAbort = null; // AbortController-like flag for stopping Google TTS loop
 let autoScrollEnabled = true;
 let isProgrammaticScroll = false;
 let skipNextAutoScroll = false;
@@ -287,11 +288,13 @@ async function setupTTS() {
   }
   populateVoiceSelect();
 
-  const bestVoice = getBestVoiceForLanguage(allVoices, currentDoc.language || 'es');
-  if (bestVoice) {
-    tts.setVoice(bestVoice);
-    const sel = document.getElementById('voice-select');
-    sel.value = bestVoice.name;
+  if (activeEngine === 'webspeech') {
+    const bestVoice = getBestVoiceForLanguage(allVoices, currentDoc.language || 'es');
+    if (bestVoice) {
+      tts.setVoice(bestVoice);
+      const sel = document.getElementById('voice-select');
+      sel.value = bestVoice.name;
+    }
   }
 
   // Update seek bar
@@ -302,7 +305,7 @@ async function setupTTS() {
   document.getElementById('tts-current').textContent =
     (currentDoc.readingProgress?.chunkIndex || 0) + 1;
 
-  // TTS callbacks
+  // TTS callbacks (used by Web Speech engine)
   tts.onChunkStart = (idx) => {
     highlightChunk(idx);
     if (skipNextAutoScroll) {
@@ -327,12 +330,7 @@ async function setupTTS() {
   };
 
   tts.onStateChange = (state) => {
-    const btn = document.getElementById('btn-play');
-    btn.textContent = state === 'playing' ? '⏸' : '▶';
-    btn.setAttribute('aria-label', state === 'playing' ? 'Pausar' : 'Reproducir');
-    document.getElementById('tts-status').textContent =
-      state === 'playing' ? `Leyendo...` :
-      state === 'paused' ? 'Pausado' : 'Listo';
+    updatePlayButton(state);
   };
 
   tts.onFinish = () => {
@@ -341,10 +339,36 @@ async function setupTTS() {
   };
 }
 
+/** Update play button and status for any engine */
+function updatePlayButton(state) {
+  const btn = document.getElementById('btn-play');
+  btn.textContent = state === 'playing' ? '⏸' : '▶';
+  btn.setAttribute('aria-label', state === 'playing' ? 'Pausar' : 'Reproducir');
+  document.getElementById('tts-status').textContent =
+    state === 'playing' ? 'Leyendo...' :
+    state === 'paused' ? 'Pausado' : 'Listo';
+}
+
+/** Populate voice select based on active engine */
 function populateVoiceSelect() {
   const sel = document.getElementById('voice-select');
   sel.innerHTML = '';
 
+  if (activeEngine === 'google-translate') {
+    // Show language list for Google Translate
+    const langs = googleTTS.getLanguages();
+    const docLang = currentDoc?.language || 'es';
+    for (const l of langs) {
+      const opt = document.createElement('option');
+      opt.value = l.code;
+      opt.textContent = `🌐 ${l.name}`;
+      if (l.code === docLang) opt.selected = true;
+      sel.appendChild(opt);
+    }
+    return;
+  }
+
+  // Web Speech: show system voices grouped by language
   const groups = groupVoicesByLanguage(allVoices);
   const langNames = { es:'Español', en:'English', fr:'Français', de:'Deutsch', pt:'Português', it:'Italiano', ja:'日本語', zh:'中文', ko:'한국어', ru:'Русский', nl:'Nederlands', ar:'العربية' };
 
@@ -362,53 +386,78 @@ function populateVoiceSelect() {
 }
 
 // ─── Google Translate Audio Playback ────────────
+
+/** Stop any running Google TTS playback */
+function stopGoogleTTS() {
+  if (googleTTSAbort) {
+    googleTTSAbort.cancelled = true;
+    googleTTSAbort = null;
+  }
+  googleTTS.stop();
+  updatePlayButton('stopped');
+}
+
 async function playWithGoogleTranslate() {
   if (!currentDoc || !currentDoc.chunks.length) return;
-  
+
+  // Cancel any previous Google TTS loop
+  stopGoogleTTS();
+
+  const session = { cancelled: false };
+  googleTTSAbort = session;
+
   const startFrom = currentDoc.readingProgress?.chunkIndex || 0;
-  const lang = currentDoc.language || 'es';
-  
+  // Use the voice-select value as language (it stores lang codes for Google Translate)
+  const sel = document.getElementById('voice-select');
+  const lang = sel.value || currentDoc.language || 'es';
+
+  updatePlayButton('playing');
+
   try {
-    document.getElementById('tts-status').textContent = 'Descargando audio...';
-    
-    // Play chunks sequentially with Google Translate Audio
     for (let i = startFrom; i < currentDoc.chunks.length; i++) {
+      if (session.cancelled) return;
+
       const text = currentDoc.chunks[i];
       if (!text || !text.trim()) continue;
-      
+
       // Update UI
       highlightChunk(i);
-      scrollToChunk(i);
+      if (!skipNextAutoScroll) scrollToChunk(i);
+      else skipNextAutoScroll = false;
       document.getElementById('tts-seek').value = i;
       document.getElementById('tts-current').textContent = i + 1;
-      document.getElementById('tts-status').textContent = `Leyendo ${i + 1} de ${currentDoc.chunks.length}`;
+      document.getElementById('tts-status').textContent =
+        `Leyendo ${i + 1} de ${currentDoc.chunks.length}`;
       updateProgress(currentDocId, { chunkIndex: i });
-      
+
       try {
         const audio = await googleTTS.synthesize(text, lang);
-        if (!audio) continue;
-        
-        // Play audio and wait for it to finish
+        if (!audio || session.cancelled) return;
+
+        googleTTS.currentAudio = audio;
         await new Promise((resolve) => {
           audio.onended = resolve;
           audio.onerror = () => resolve();
-          audio.play().catch(e => {
-            console.warn('Audio play error:', e);
-            resolve();
-          });
+          audio.play().catch(() => resolve());
         });
       } catch (err) {
-        console.warn('Google TTS synthesis failed for chunk', i, err);
-        // Continue with next chunk on error
+        console.warn('Google TTS chunk', i, 'failed:', err);
       }
     }
-    
-    // Playback complete
-    clearHighlights();
-    document.getElementById('tts-status').textContent = '✓ Lectura completada';
+
+    if (!session.cancelled) {
+      clearHighlights();
+      document.getElementById('tts-status').textContent = '✓ Lectura completada';
+      updatePlayButton('stopped');
+    }
   } catch (err) {
-    console.error('Google Translate playback error:', err);
-    document.getElementById('tts-status').textContent = '❌ Error en lectura';
+    if (!session.cancelled) {
+      console.error('Google Translate playback error:', err);
+      document.getElementById('tts-status').textContent = '❌ Error en lectura';
+      updatePlayButton('stopped');
+    }
+  } finally {
+    if (googleTTSAbort === session) googleTTSAbort = null;
   }
 }
 
@@ -542,8 +591,8 @@ function initReaderControls() {
   // Back button
   document.getElementById('btn-back').addEventListener('click', async () => {
     tts.stop();
+    stopGoogleTTS();
     clearHighlights();
-    // Save scroll position
     if (currentDocId) {
       const body = document.getElementById('reader-body');
       await updateProgress(currentDocId, { scrollPosition: body.scrollTop });
@@ -554,12 +603,20 @@ function initReaderControls() {
     await renderLibrary();
   });
 
-  // Play/Pause with engine support
+  // Play/Pause — dispatches to the active engine
   document.getElementById('btn-play').addEventListener('click', async () => {
     if (!currentDoc) return;
-    if (ttsTTSEngine === 'google-translate') {
-      await playWithGoogleTranslate();
+
+    if (activeEngine === 'google-translate') {
+      // Toggle: if currently playing, stop; otherwise start
+      if (googleTTSAbort) {
+        stopGoogleTTS();
+        clearHighlights();
+      } else {
+        await playWithGoogleTranslate();
+      }
     } else {
+      // Web Speech toggle
       if (tts.state === 'playing') {
         tts.pause();
       } else if (tts.state === 'paused') {
@@ -571,15 +628,46 @@ function initReaderControls() {
     }
   });
 
-  // Skip
-  document.getElementById('btn-skip-back').addEventListener('click', () => tts.skipBack());
-  document.getElementById('btn-skip-fwd').addEventListener('click', () => tts.skipForward());
+  // Skip — works for both engines
+  document.getElementById('btn-skip-back').addEventListener('click', () => {
+    if (activeEngine === 'google-translate' && googleTTSAbort) {
+      const idx = Math.max(0, (currentDoc?.readingProgress?.chunkIndex || 0) - 1);
+      updateProgress(currentDocId, { chunkIndex: idx });
+      if (currentDoc.readingProgress) currentDoc.readingProgress.chunkIndex = idx;
+      stopGoogleTTS();
+      playWithGoogleTranslate();
+    } else {
+      tts.skipBack();
+    }
+  });
+  document.getElementById('btn-skip-fwd').addEventListener('click', () => {
+    if (activeEngine === 'google-translate' && googleTTSAbort) {
+      const idx = Math.min((currentDoc?.chunks?.length || 1) - 1, (currentDoc?.readingProgress?.chunkIndex || 0) + 1);
+      updateProgress(currentDocId, { chunkIndex: idx });
+      if (currentDoc.readingProgress) currentDoc.readingProgress.chunkIndex = idx;
+      stopGoogleTTS();
+      playWithGoogleTranslate();
+    } else {
+      tts.skipForward();
+    }
+  });
 
   // Seek bar
   document.getElementById('tts-seek').addEventListener('input', (e) => {
     const idx = parseInt(e.target.value);
     document.getElementById('tts-current').textContent = idx + 1;
-    if (tts.state === 'playing') {
+
+    if (activeEngine === 'google-translate') {
+      // Update stored position; if playing, restart from there
+      if (currentDoc?.readingProgress) currentDoc.readingProgress.chunkIndex = idx;
+      updateProgress(currentDocId, { chunkIndex: idx });
+      highlightChunk(idx);
+      scrollToChunk(idx);
+      if (googleTTSAbort) {
+        stopGoogleTTS();
+        playWithGoogleTranslate();
+      }
+    } else if (tts.state === 'playing') {
       tts.seekTo(idx);
     } else {
       highlightChunk(idx);
@@ -588,29 +676,40 @@ function initReaderControls() {
     }
   });
 
-  // Speed buttons
+  // Speed buttons — apply to both engines
   document.querySelectorAll('.tts-speed-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       document.querySelectorAll('.tts-speed-btn').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
-      tts.setRate(parseFloat(btn.dataset.speed));
+      const speed = parseFloat(btn.dataset.speed);
+      tts.setRate(speed);
+      googleTTS.setRate(speed);
     });
   });
 
-  // Voice select
+  // Voice select — behavior depends on active engine
   document.getElementById('voice-select').addEventListener('change', (e) => {
+    if (activeEngine === 'google-translate') {
+      // Value is a language code; nothing else to do until next play
+      return;
+    }
     const voice = allVoices.find(v => v.name === e.target.value);
     if (voice) tts.setVoice(voice);
   });
 
   // TTS Engine switcher
   document.getElementById('tts-engine')?.addEventListener('change', (e) => {
-    ttsTTSEngine = e.target.value;
-    updateTTSStatus();
-    // Stop current playback when switching engines
+    // Stop both engines
     tts.stop();
-    googleTTS.stop();
-    console.log('TTS Engine switched to:', ttsTTSEngine);
+    stopGoogleTTS();
+    clearHighlights();
+
+    activeEngine = e.target.value;
+    console.log('TTS Engine switched to:', activeEngine);
+
+    // Re-populate voice dropdown for the new engine
+    populateVoiceSelect();
+    updatePlayButton('stopped');
   });
 
   // Theme toggle
@@ -709,15 +808,6 @@ function initReaderControls() {
 // ─── Voices Init ───────────────────────────────
 async function initVoices() {
   allVoices = await loadVoices();
-  updateTTSStatus();
-}
-
-function updateTTSStatus() {
-  const engine = document.getElementById('tts-engine')?.value || 'webspeech';
-  const status = document.getElementById('tts-status');
-  const icon = engine === 'google-translate' ? '🌐' : '🔊';
-  const label = engine === 'google-translate' ? 'Google Translate' : 'Web Speech';
-  if (status) status.textContent = icon + ' ' + label;
 }
 
 // ─── File Input & Drag-Drop ────────────────────

@@ -2,7 +2,7 @@
   X-Frame-Options: DENY
   X-Content-Type-Options: nosniff
   Referrer-Policy: no-referrer
-  Content-Security-Policy: default-src 'self'; script-src 'self' cdn.jsdelivr.net esm.sh; style-src 'self' 'unsafe-inline' fonts.googleapis.com; font-src fonts.gstatic.com; connect-src esm.sh cdn.jsdelivr.net; worker-src blob: cdn.jsdelivr.net; img-src 'self' data:
+  Content-Security-Policy: default-src 'self'; script-src 'self' cdn.jsdelivr.net esm.sh; style-src 'self' 'unsafe-inline' fonts.googleapis.com; font-src fonts.gstatic.com; connect-src 'self' esm.sh cdn.jsdelivr.net translate.google.com translate.google.com.br; worker-src blob: cdn.jsdelivr.net; img-src 'self' data:
 
 /index.html
   Cache-Control: no-cache

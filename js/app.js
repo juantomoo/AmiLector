@@ -13,12 +13,15 @@ import {
   TTSEngine, loadVoices, getBestVoiceForLanguage,
   groupVoicesByLanguage, getVoiceQuality, rankVoices
 } from './reader.js';
+import { GoogleTranslateTTS } from './google-tts.js';
 
 // ─── State ─────────────────────────────────────
 let currentDocId = null;
 let currentDoc = null;
 let allVoices = [];
 let tts = new TTSEngine();
+let googleTTS = new GoogleTranslateTTS();
+let ttsTTSEngine = 'webspeech';
 let autoScrollEnabled = true;
 let isProgrammaticScroll = false;
 let skipNextAutoScroll = false;
@@ -358,6 +361,57 @@ function populateVoiceSelect() {
   }
 }
 
+// ─── Google Translate Audio Playback ────────────
+async function playWithGoogleTranslate() {
+  if (!currentDoc || !currentDoc.chunks.length) return;
+  
+  const startFrom = currentDoc.readingProgress?.chunkIndex || 0;
+  const lang = currentDoc.language || 'es';
+  
+  try {
+    document.getElementById('tts-status').textContent = 'Descargando audio...';
+    
+    // Play chunks sequentially with Google Translate Audio
+    for (let i = startFrom; i < currentDoc.chunks.length; i++) {
+      const text = currentDoc.chunks[i];
+      if (!text || !text.trim()) continue;
+      
+      // Update UI
+      highlightChunk(i);
+      scrollToChunk(i);
+      document.getElementById('tts-seek').value = i;
+      document.getElementById('tts-current').textContent = i + 1;
+      document.getElementById('tts-status').textContent = `Leyendo ${i + 1} de ${currentDoc.chunks.length}`;
+      updateProgress(currentDocId, { chunkIndex: i });
+      
+      try {
+        const audio = await googleTTS.synthesize(text, lang);
+        if (!audio) continue;
+        
+        // Play audio and wait for it to finish
+        await new Promise((resolve) => {
+          audio.onended = resolve;
+          audio.onerror = () => resolve();
+          audio.play().catch(e => {
+            console.warn('Audio play error:', e);
+            resolve();
+          });
+        });
+      } catch (err) {
+        console.warn('Google TTS synthesis failed for chunk', i, err);
+        // Continue with next chunk on error
+      }
+    }
+    
+    // Playback complete
+    clearHighlights();
+    document.getElementById('tts-status').textContent = '✓ Lectura completada';
+  } catch (err) {
+    console.error('Google Translate playback error:', err);
+    document.getElementById('tts-status').textContent = '❌ Error en lectura';
+  }
+}
+
 // ─── Highlighting ──────────────────────────────
 function highlightChunk(idx) {
   clearHighlights();
@@ -500,16 +554,20 @@ function initReaderControls() {
     await renderLibrary();
   });
 
-  // Play/Pause
-  document.getElementById('btn-play').addEventListener('click', () => {
+  // Play/Pause with engine support
+  document.getElementById('btn-play').addEventListener('click', async () => {
     if (!currentDoc) return;
-    if (tts.state === 'playing') {
-      tts.pause();
-    } else if (tts.state === 'paused') {
-      tts.resume();
+    if (ttsTTSEngine === 'google-translate') {
+      await playWithGoogleTranslate();
     } else {
-      const startFrom = currentDoc.readingProgress?.chunkIndex || 0;
-      tts.speak(currentDoc.chunks, startFrom);
+      if (tts.state === 'playing') {
+        tts.pause();
+      } else if (tts.state === 'paused') {
+        tts.resume();
+      } else {
+        const startFrom = currentDoc.readingProgress?.chunkIndex || 0;
+        tts.speak(currentDoc.chunks, startFrom);
+      }
     }
   });
 
@@ -543,6 +601,16 @@ function initReaderControls() {
   document.getElementById('voice-select').addEventListener('change', (e) => {
     const voice = allVoices.find(v => v.name === e.target.value);
     if (voice) tts.setVoice(voice);
+  });
+
+  // TTS Engine switcher
+  document.getElementById('tts-engine')?.addEventListener('change', (e) => {
+    ttsTTSEngine = e.target.value;
+    updateTTSStatus();
+    // Stop current playback when switching engines
+    tts.stop();
+    googleTTS.stop();
+    console.log('TTS Engine switched to:', ttsTTSEngine);
   });
 
   // Theme toggle
@@ -641,6 +709,15 @@ function initReaderControls() {
 // ─── Voices Init ───────────────────────────────
 async function initVoices() {
   allVoices = await loadVoices();
+  updateTTSStatus();
+}
+
+function updateTTSStatus() {
+  const engine = document.getElementById('tts-engine')?.value || 'webspeech';
+  const status = document.getElementById('tts-status');
+  const icon = engine === 'google-translate' ? '🌐' : '🔊';
+  const label = engine === 'google-translate' ? 'Google Translate' : 'Web Speech';
+  if (status) status.textContent = icon + ' ' + label;
 }
 
 // ─── File Input & Drag-Drop ────────────────────

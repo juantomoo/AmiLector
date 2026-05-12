@@ -93,9 +93,16 @@
           <button class="tts-speed-btn" data-speed="2">2x</button>
         </div>
       </div>
-      <div style="display:flex;align-items:center;gap:8px;justify-content:space-between">
-        <select id="voice-select" class="tts-voice-select" aria-label="Seleccionar voz"></select>
-        <span id="tts-status" class="tts-status" role="status" aria-live="polite">Listo</span>
+      <div style="display:flex;align-items:center;gap:8px;justify-content:space-between;flex-wrap:wrap">
+        <div style="display:flex;gap:8px;align-items:center;min-width:280px">
+          <label for="tts-engine" style="font-size:0.85rem;white-space:nowrap">Motor:</label>
+          <select id="tts-engine" class="tts-voice-select" aria-label="Motor de síntesis" style="flex:1;max-width:200px">
+            <option value="webspeech">Web Speech</option>
+            <option value="google-translate">Google Translate 🌐</option>
+          </select>
+        </div>
+        <select id="voice-select" class="tts-voice-select" aria-label="Seleccionar voz" style="flex:1;min-width:150px"></select>
+        <span id="tts-status" class="tts-status" role="status" aria-live="polite" style="min-width:60px">Listo</span>
       </div>
     </div>
   </section>

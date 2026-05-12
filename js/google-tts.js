@@ -8,6 +8,7 @@ export class GoogleTranslateTTS {
     this.isPlaying = false;
     this.currentAudio = null;
     this.rate = 1.0;
+    this.maxChars = 180;
   }
 
   /**
@@ -16,77 +17,145 @@ export class GoogleTranslateTTS {
   async synthesize(text, lang = 'es') {
     if (!text || text.trim().length === 0) return null;
 
-    try {
-      // Split text into sentences to avoid URL length limits
-      const sentences = this._splitIntoSentences(text);
-      const audioBlobs = [];
+    const [firstSegment] = this._splitIntoSegments(text);
+    if (!firstSegment) return null;
 
-      for (const sentence of sentences) {
-        if (!sentence.trim()) continue;
-        const blob = await this._fetchAudio(sentence, lang);
-        if (blob) audioBlobs.push(blob);
-      }
-
-      if (audioBlobs.length === 0) {
-        throw new Error('No audio generated from Google Translate');
-      }
-
-      // Combine all audio blobs
-      const combined = new Blob(audioBlobs, { type: 'audio/mpeg' });
-      const url = URL.createObjectURL(combined);
-      const audio = new Audio(url);
-      audio.playbackRate = this.rate;
-      
-      return audio;
-    } catch (error) {
-      console.error('Google TTS error:', error);
-      throw error;
-    }
+    return this._createAudio(firstSegment, lang);
   }
 
   /**
-   * Fetch audio from Google Translate endpoint
+   * Play a text chunk through Google Translate's audio endpoint.
+   * The endpoint does not support browser fetch/CORS, so audio must be loaded
+   * directly by the media element.
    */
-  async _fetchAudio(text, lang) {
+  async play(text, lang = 'es', isCancelled = () => false) {
+    const segments = this._splitIntoSegments(text);
+    if (segments.length === 0) return;
+
+    this.isPlaying = true;
+
+    try {
+      for (const segment of segments) {
+        if (isCancelled()) break;
+        await this._playSegment(segment, lang, isCancelled);
+      }
+    } finally {
+      this.isPlaying = false;
+    }
+  }
+
+  _createAudio(text, lang) {
     const params = new URLSearchParams({
       client: 'gtx',
       q: text,
       tl: lang,
     });
 
-    // Try multiple endpoints for reliability
-    const endpoints = [
-      `https://translate.google.com/translate_tts?${params}`,
-      `https://translate.google.com.br/translate_tts?${params}`,
-    ];
+    const audio = new Audio(`https://translate.google.com/translate_tts?${params}`);
+    audio.preload = 'auto';
+    audio.playbackRate = this.rate;
+    return audio;
+  }
 
-    for (const url of endpoints) {
+  async _playSegment(text, lang, isCancelled) {
+    const urls = this._getAudioUrls(text, lang);
+    let lastError = null;
+
+    for (const url of urls) {
+      if (isCancelled()) return;
+
+      const audio = new Audio(url);
+      audio.preload = 'auto';
+      audio.playbackRate = this.rate;
+      this.currentAudio = audio;
+
       try {
-        const response = await fetch(url, {
-          method: 'GET',
-          headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-          },
-        });
-
-        if (response.ok) {
-          return await response.blob();
-        }
+        await this._playAudio(audio, isCancelled);
+        return;
       } catch (err) {
+        lastError = err;
         console.warn(`Endpoint ${url} failed:`, err);
       }
     }
 
-    throw new Error('All Google Translate endpoints failed');
+    throw lastError || new Error('All Google Translate endpoints failed');
+  }
+
+  _getAudioUrls(text, lang) {
+    const params = new URLSearchParams({
+      client: 'gtx',
+      q: text,
+      tl: lang,
+    });
+
+    return [
+      `https://translate.google.com/translate_tts?${params}`,
+      `https://translate.google.com.br/translate_tts?${params}`,
+    ];
+  }
+
+  _playAudio(audio, isCancelled) {
+    return new Promise((resolve, reject) => {
+      let cancelTimer = null;
+      const cleanup = () => {
+        if (cancelTimer) clearInterval(cancelTimer);
+        audio.onended = null;
+        audio.onerror = null;
+      };
+
+      audio.onended = () => {
+        cleanup();
+        resolve();
+      };
+      audio.onerror = () => {
+        cleanup();
+        reject(new Error('Google Translate audio could not be loaded'));
+      };
+
+      cancelTimer = setInterval(() => {
+        if (!isCancelled()) return;
+        audio.pause();
+        cleanup();
+        resolve();
+      }, 100);
+
+      audio.play().catch((err) => {
+        cleanup();
+        if (isCancelled()) resolve();
+        else reject(err);
+      });
+    });
   }
 
   /**
-   * Split text into sentences
+   * Split text into URL-safe speech segments.
    */
-  _splitIntoSentences(text) {
-    // Split by period, exclamation, question mark
-    const sentences = text.match(/[^.!?]+[.!?]+/g) || [text];
-    return sentences.map(s => s.trim()).filter(s => s.length > 0);
+  _splitIntoSegments(text) {
+    const sentences = text
+      .replace(/\s+/g, ' ')
+      .match(/[^.!?;:]+[.!?;:]?|[^.!?;:]+$/g) || [text];
+    const segments = [];
+
+    for (const sentence of sentences.map(s => s.trim()).filter(Boolean)) {
+      if (sentence.length <= this.maxChars) {
+        segments.push(sentence);
+        continue;
+      }
+
+      let current = '';
+      for (const word of sentence.split(/\s+/)) {
+        const next = current ? `${current} ${word}` : word;
+        if (next.length > this.maxChars && current) {
+          segments.push(current);
+          current = word;
+        } else {
+          current = next;
+        }
+      }
+      if (current) segments.push(current);
+    }
+
+    return segments;
   }
 
   /**
@@ -106,6 +175,7 @@ export class GoogleTranslateTTS {
     if (this.currentAudio) {
       this.currentAudio.pause();
       this.currentAudio.currentTime = 0;
+      this.currentAudio = null;
     }
     this.isPlaying = false;
   }
@@ -114,15 +184,8 @@ export class GoogleTranslateTTS {
    * Check if available
    */
   async isAvailable() {
-    try {
-      const response = await fetch(
-        'https://translate.google.com/translate_tts?client=gtx&q=test&tl=en',
-        { method: 'HEAD' }
-      );
-      return response.ok;
-    } catch {
-      return false;
-    }
+    const audio = this._createAudio('test', 'en');
+    return Boolean(audio.canPlayType('audio/mpeg'));
   }
 
   /**

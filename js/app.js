@@ -355,13 +355,15 @@ function populateVoiceSelect() {
   sel.innerHTML = '';
 
   if (activeEngine === 'google-translate') {
-    // Show language list for Google Translate
+    // Google Translate's public audio endpoint exposes language, not voice variants.
     const langs = googleTTS.getLanguages();
     const docLang = currentDoc?.language || 'es';
+    sel.setAttribute('aria-label', 'Seleccionar idioma de Google Translate');
+    sel.title = 'Google Translate usa una voz única por idioma. Para elegir voces de Google instaladas en Chrome, usa Web Speech.';
     for (const l of langs) {
       const opt = document.createElement('option');
       opt.value = l.code;
-      opt.textContent = `🌐 ${l.name}`;
+      opt.textContent = `${l.name} · voz única`;
       if (l.code === docLang) opt.selected = true;
       sel.appendChild(opt);
     }
@@ -369,6 +371,8 @@ function populateVoiceSelect() {
   }
 
   // Web Speech: show system voices grouped by language
+  sel.setAttribute('aria-label', 'Seleccionar voz');
+  sel.title = 'Voces disponibles en el navegador o sistema';
   const groups = groupVoicesByLanguage(allVoices);
   const langNames = { es:'Español', en:'English', fr:'Français', de:'Deutsch', pt:'Português', it:'Italiano', ja:'日本語', zh:'中文', ko:'한국어', ru:'Русский', nl:'Nederlands', ar:'العربية' };
 
@@ -429,19 +433,19 @@ async function playWithGoogleTranslate() {
       document.getElementById('tts-status').textContent =
         `Leyendo ${i + 1} de ${currentDoc.chunks.length}`;
       updateProgress(currentDocId, { chunkIndex: i });
+      if (currentDoc.readingProgress) currentDoc.readingProgress.chunkIndex = i;
+      else currentDoc.readingProgress = { chunkIndex: i };
 
       try {
-        const audio = await googleTTS.synthesize(text, lang);
-        if (!audio || session.cancelled) return;
-
-        googleTTS.currentAudio = audio;
-        await new Promise((resolve) => {
-          audio.onended = resolve;
-          audio.onerror = () => resolve();
-          audio.play().catch(() => resolve());
-        });
+        await googleTTS.play(text, lang, () => session.cancelled);
       } catch (err) {
+        if (session.cancelled) return;
         console.warn('Google TTS chunk', i, 'failed:', err);
+        document.getElementById('tts-status').textContent =
+          'Error cargando audio de Google';
+        updatePlayButton('stopped');
+        clearHighlights();
+        return;
       }
     }
 
@@ -690,7 +694,7 @@ function initReaderControls() {
   // Voice select — behavior depends on active engine
   document.getElementById('voice-select').addEventListener('change', (e) => {
     if (activeEngine === 'google-translate') {
-      // Value is a language code; nothing else to do until next play
+      // Value is a language code; Google Translate does not expose voice variants.
       return;
     }
     const voice = allVoices.find(v => v.name === e.target.value);
